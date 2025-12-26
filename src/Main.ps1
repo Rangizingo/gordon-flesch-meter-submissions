@@ -76,9 +76,11 @@ function Invoke-MeterSubmission {
     Clear-OldLogs -RetentionDays $config.Settings.logRetentionDays
 
     # Get pending meter requests
+    $lookbackDays = if ($config.Settings.emailLookbackDays) { $config.Settings.emailLookbackDays } else { 7 }
     $emails = Get-PendingMeterRequests `
         -SenderFilter $config.Settings.senderFilter `
-        -SubjectFilter $config.Settings.subjectFilter
+        -SubjectFilter $config.Settings.subjectFilter `
+        -DaysBack $lookbackDays
 
     if ($emails.Count -eq 0) {
         Write-Log "No pending meter request emails found" -Level "INFO"

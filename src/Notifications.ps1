@@ -122,7 +122,7 @@ function Send-SubmissionSummary {
         [array]$Results,
 
         [Parameter(Mandatory)]
-        [hashtable]$Settings
+        $Settings  # PSCustomObject from JSON
     )
 
     $successCount = ($Results | Where-Object { $_.Success }).Count

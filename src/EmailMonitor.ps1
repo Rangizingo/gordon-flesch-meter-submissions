@@ -105,15 +105,22 @@ function Parse-MeterRequestEmail {
         Printers = @()
     }
 
-    # Extract submission URL (ac= token)
+    # Extract submission URL (ac= token) - try href first, then plain text
     $urlPattern = 'href="(https://einfo\.gflesch\.com/einfo//aem\.aspx\?ac=[^"]+)"'
     $urlMatch = [regex]::Match($body, $urlPattern, 'IgnoreCase')
 
     if ($urlMatch.Success) {
         $result.SubmissionUrl = $urlMatch.Groups[1].Value
+    } else {
+        # Fallback: plain text URL
+        $plainUrlPattern = '(https://einfo\.gflesch\.com/einfo//aem\.aspx\?ac=[A-Z0-9-]+)'
+        $plainUrlMatch = [regex]::Match($body, $plainUrlPattern, 'IgnoreCase')
+        if ($plainUrlMatch.Success) {
+            $result.SubmissionUrl = $plainUrlMatch.Groups[1].Value
+        }
     }
 
-    # Extract printer info from table
+    # Extract printer info from table (HTML format - Ricoh style)
     # Pattern: Equipment ID and Serial in same cell
     $equipPattern = '<td[^>]*>([A-Z]{2}\d+)<br[^/]*/?>\s*\n?\s*([A-Z0-9]+)</td>'
     $equipMatches = [regex]::Matches($body, $equipPattern, 'IgnoreCase,Singleline')
@@ -125,6 +132,32 @@ function Parse-MeterRequestEmail {
     # Location notes
     $locPattern = 'Location Notes:\s*</b>\s*([^<]+)</td>'
     $locMatches = [regex]::Matches($body, $locPattern, 'IgnoreCase')
+
+    # Fallback: Plain text format (Lexmark style)
+    if ($equipMatches.Count -eq 0) {
+        # Plain text patterns
+        $plainEquipPattern = 'Equipment\s+([A-Z]{2}\d+)'
+        $plainSerialPattern = 'Serial\s*Number\s+([A-Z0-9]+)'
+        $plainMakePattern = 'Make\s+(Ricoh|HP|Canon|Lexmark|Xerox|Brother|Kyocera|Sharp|Konica|Toshiba)'
+        $plainModelPattern = 'Model\s+([A-Z0-9]+)'
+
+        $equipMatch = [regex]::Match($body, $plainEquipPattern, 'IgnoreCase')
+        $serialMatch = [regex]::Match($body, $plainSerialPattern, 'IgnoreCase')
+        $makeMatch = [regex]::Match($body, $plainMakePattern, 'IgnoreCase')
+        $modelMatch = [regex]::Match($body, $plainModelPattern, 'IgnoreCase')
+
+        if ($equipMatch.Success -and $serialMatch.Success) {
+            $printer = @{
+                EquipmentId = $equipMatch.Groups[1].Value.Trim()
+                Serial = $serialMatch.Groups[1].Value.Trim()
+                Make = if ($makeMatch.Success) { $makeMatch.Groups[1].Value.Trim() } else { "Unknown" }
+                Model = if ($modelMatch.Success) { $modelMatch.Groups[1].Value.Trim() } else { "Unknown" }
+                Location = "Unknown"
+            }
+            $result.Printers += $printer
+            Write-Log "Parsed email (plain text): $($printer.EquipmentId) / $($printer.Serial)" -Level "INFO"
+        }
+    }
 
     for ($i = 0; $i -lt $equipMatches.Count; $i++) {
         $printer = @{
