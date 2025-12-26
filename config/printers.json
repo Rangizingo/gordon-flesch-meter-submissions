@@ -1,0 +1,13 @@
+{
+  "printers": [
+    {
+      "equipmentId": "MA7502",
+      "serial": "W433L400252",
+      "ip": "192.168.11.222",
+      "snmpCommunity": "public",
+      "meterOid": "1.3.6.1.4.1.367.3.2.1.2.19.5.1.9.1",
+      "location": "3rd FL Accounting",
+      "enabled": true
+    }
+  ]
+}

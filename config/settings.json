@@ -1,0 +1,23 @@
+{
+  "emailAddress": "pblanco@equippers.com",
+  "senderFilter": "gfc.contracts-d@gflesch.com",
+  "subjectFilter": "meter reading request",
+  "checkIntervalDays": 1,
+  "logRetentionDays": 30,
+  "notifications": {
+    "toast": true,
+    "email": true,
+    "notifyOnSuccess": true,
+    "notifyOnFailure": true,
+    "notifyEmail": "pblanco@equippers.com"
+  },
+  "snmp": {
+    "timeout": 10000,
+    "retries": 3,
+    "retryDelay": 5000
+  },
+  "submission": {
+    "retries": 3,
+    "retryDelay": 5000
+  }
+}
