@@ -88,127 +88,165 @@ function Invoke-MeterSubmission {
         return
     }
 
-    $results = @()
-
+    # Parse all emails first to group by printer
+    $parsedEmails = @()
     foreach ($email in $emails) {
-        # Check if already processed
-        if (-not $ForceProcess -and (Test-EmailProcessed -EmailId $email.Id)) {
-            Write-Log "Skipping already processed email: $($email.Subject)" -Level "INFO"
-            continue
-        }
-
-        Write-Log "Processing email: $($email.Subject)" -Level "INFO"
-
-        # Parse email
         $parsed = Parse-MeterRequestEmail -Email $email
+        if ($parsed.SubmissionUrl -and $parsed.Printers.Count -gt 0) {
+            $parsedEmails += @{
+                Email = $email
+                Parsed = $parsed
+            }
+        }
+    }
 
-        if (-not $parsed.SubmissionUrl) {
-            Write-Log "No submission URL found in email" -Level "WARN"
+    # Group by printer (equipment ID) and keep only most recent per printer
+    $printerLatestEmail = @{}
+    foreach ($item in $parsedEmails) {
+        foreach ($printer in $item.Parsed.Printers) {
+            $equipId = $printer.EquipmentId
+            if (-not $printerLatestEmail.ContainsKey($equipId) -or
+                $item.Email.ReceivedDateTime -gt $printerLatestEmail[$equipId].Email.ReceivedDateTime) {
+                $printerLatestEmail[$equipId] = $item
+            }
+        }
+    }
+
+    Write-Log "Found $($printerLatestEmail.Count) printer(s) with pending requests (most recent only)" -Level "INFO"
+
+    $results = @()
+    $processedTokens = @{}  # Track tokens we've already submitted this run
+
+    foreach ($equipId in $printerLatestEmail.Keys) {
+        $item = $printerLatestEmail[$equipId]
+        $email = $item.Email
+        $parsed = $item.Parsed
+
+        # Check if already processed (in persistent storage)
+        if (-not $ForceProcess -and (Test-EmailProcessed -EmailId $email.Id)) {
+            Write-Log "Skipping already processed email for $equipId" -Level "INFO"
             continue
         }
 
-        # Process each printer in the email
-        foreach ($printer in $parsed.Printers) {
-            Write-Log "Processing printer: $($printer.EquipmentId) ($($printer.Serial))" -Level "INFO"
+        # Check if we've already used this token this run (1 submission per token)
+        $token = $parsed.SubmissionUrl
+        if ($processedTokens.ContainsKey($token)) {
+            Write-Log "Token already used this run, skipping $equipId" -Level "INFO"
+            continue
+        }
 
-            # Find matching config
-            $printerConfig = Find-PrinterConfig -Serial $printer.Serial -EquipmentId $printer.EquipmentId -PrinterConfigs $config.Printers
+        Write-Log "Processing: $equipId (email from $($email.ReceivedDateTime))" -Level "INFO"
 
-            if (-not $printerConfig) {
-                Write-Log "No configuration found for printer $($printer.EquipmentId)" -Level "WARN"
-                $results += @{
-                    Success = $false
-                    EquipmentId = $printer.EquipmentId
-                    Error = "No configuration found"
-                }
-                continue
-            }
+        # Find the printer info for this equipment
+        $printer = $parsed.Printers | Where-Object { $_.EquipmentId -eq $equipId } | Select-Object -First 1
 
-            # Test printer connectivity
-            if (-not (Test-PrinterConnection -IP $printerConfig.ip)) {
-                Write-Log "Printer $($printerConfig.ip) is not reachable" -Level "ERROR"
-                $results += @{
-                    Success = $false
-                    EquipmentId = $printer.EquipmentId
-                    Error = "Printer not reachable"
-                }
-                continue
-            }
+        if (-not $printer) {
+            Write-Log "Printer info not found for $equipId" -Level "WARN"
+            continue
+        }
 
-            # Get SNMP reading
-            $snmpResult = Get-PrinterMeterReading `
-                -IP $printerConfig.ip `
-                -Community $printerConfig.snmpCommunity `
-                -OID $printerConfig.meterOid `
-                -Retries $config.Settings.snmp.retries `
-                -RetryDelay $config.Settings.snmp.retryDelay `
-                -Timeout $config.Settings.snmp.timeout
+        # Mark token as used for this run
+        $processedTokens[$token] = $true
 
-            if (-not $snmpResult.Success) {
-                Write-Log "Failed to get SNMP reading for $($printer.EquipmentId)" -Level "ERROR"
-                $results += @{
-                    Success = $false
-                    EquipmentId = $printer.EquipmentId
-                    Error = "SNMP failed: $($snmpResult.Error)"
-                }
-                continue
-            }
+        Write-Log "Processing printer: $($printer.EquipmentId) ($($printer.Serial))" -Level "INFO"
 
-            Write-Log "SNMP reading: $($snmpResult.Reading)" -Level "INFO"
+        # Find matching config
+        $printerConfig = Find-PrinterConfig -Serial $printer.Serial -EquipmentId $printer.EquipmentId -PrinterConfigs $config.Printers
 
-            if ($TestMode) {
-                Write-Log "[TEST MODE] Would submit reading $($snmpResult.Reading) for $($printer.EquipmentId)" -Level "INFO"
-                $results += @{
-                    Success = $true
-                    EquipmentId = $printer.EquipmentId
-                    Reading = $snmpResult.Reading
-                    TestMode = $true
-                }
-                continue
-            }
-
-            # Get GF session data
-            $gfSession = Get-GFSessionData -SubmissionUrl $parsed.SubmissionUrl
-
-            if (-not $gfSession.Success) {
-                Write-Log "Failed to get GF session: $($gfSession.Error)" -Level "ERROR"
-                $results += @{
-                    Success = $false
-                    EquipmentId = $printer.EquipmentId
-                    Error = "GF session failed"
-                }
-                continue
-            }
-
-            # Find matching equipment in GF data
-            $gfEquipment = $gfSession.Equipment | Select-Object -First 1
-
-            if (-not $gfEquipment) {
-                Write-Log "No equipment found on GF submission page" -Level "ERROR"
-                $results += @{
-                    Success = $false
-                    EquipmentId = $printer.EquipmentId
-                    Error = "No equipment on GF page"
-                }
-                continue
-            }
-
-            # Submit meter reading
-            $submitResult = Submit-MeterReading `
-                -SubmissionUrl $parsed.SubmissionUrl `
-                -InternalEquipmentId $gfEquipment.InternalId `
-                -MeterId $gfEquipment.MeterId `
-                -Reading $snmpResult.Reading `
-                -Session $gfSession.Session `
-                -Retries $config.Settings.submission.retries `
-                -RetryDelay $config.Settings.submission.retryDelay
-
+        if (-not $printerConfig) {
+            Write-Log "No configuration found for printer $($printer.EquipmentId)" -Level "WARN"
             $results += @{
-                Success = $submitResult.Success
+                Success = $false
+                EquipmentId = $printer.EquipmentId
+                Error = "No configuration found"
+            }
+            continue
+        }
+
+        # Test printer connectivity
+        if (-not (Test-PrinterConnection -IP $printerConfig.ip)) {
+            Write-Log "Printer $($printerConfig.ip) is not reachable" -Level "ERROR"
+            $results += @{
+                Success = $false
+                EquipmentId = $printer.EquipmentId
+                Error = "Printer not reachable"
+            }
+            continue
+        }
+
+        # Get SNMP reading
+        $snmpResult = Get-PrinterMeterReading `
+            -IP $printerConfig.ip `
+            -Community $printerConfig.snmpCommunity `
+            -OID $printerConfig.meterOid `
+            -Retries $config.Settings.snmp.retries `
+            -RetryDelay $config.Settings.snmp.retryDelay `
+            -Timeout $config.Settings.snmp.timeout
+
+        if (-not $snmpResult.Success) {
+            Write-Log "Failed to get SNMP reading for $($printer.EquipmentId)" -Level "ERROR"
+            $results += @{
+                Success = $false
+                EquipmentId = $printer.EquipmentId
+                Error = "SNMP failed: $($snmpResult.Error)"
+            }
+            continue
+        }
+
+        Write-Log "SNMP reading: $($snmpResult.Reading)" -Level "INFO"
+
+        if ($TestMode) {
+            Write-Log "[TEST MODE] Would submit reading $($snmpResult.Reading) for $($printer.EquipmentId)" -Level "INFO"
+            $results += @{
+                Success = $true
                 EquipmentId = $printer.EquipmentId
                 Reading = $snmpResult.Reading
-                Error = $submitResult.Error
+                TestMode = $true
             }
+            continue
+        }
+
+        # Get GF session data
+        $gfSession = Get-GFSessionData -SubmissionUrl $parsed.SubmissionUrl
+
+        if (-not $gfSession.Success) {
+            Write-Log "Failed to get GF session: $($gfSession.Error)" -Level "ERROR"
+            $results += @{
+                Success = $false
+                EquipmentId = $printer.EquipmentId
+                Error = "GF session failed"
+            }
+            continue
+        }
+
+        # Find matching equipment in GF data
+        $gfEquipment = $gfSession.Equipment | Select-Object -First 1
+
+        if (-not $gfEquipment) {
+            Write-Log "No equipment found on GF submission page" -Level "ERROR"
+            $results += @{
+                Success = $false
+                EquipmentId = $printer.EquipmentId
+                Error = "No equipment on GF page"
+            }
+            continue
+        }
+
+        # Submit meter reading
+        $submitResult = Submit-MeterReading `
+            -SubmissionUrl $parsed.SubmissionUrl `
+            -InternalEquipmentId $gfEquipment.InternalId `
+            -MeterId $gfEquipment.MeterId `
+            -Reading $snmpResult.Reading `
+            -Session $gfSession.Session `
+            -Retries $config.Settings.submission.retries `
+            -RetryDelay $config.Settings.submission.retryDelay
+
+        $results += @{
+            Success = $submitResult.Success
+            EquipmentId = $printer.EquipmentId
+            Reading = $snmpResult.Reading
+            Error = $submitResult.Error
         }
 
         # Mark email as processed

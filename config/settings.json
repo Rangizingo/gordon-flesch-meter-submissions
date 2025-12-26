@@ -3,7 +3,7 @@
   "senderFilter": "gfc.contracts-d@gflesch.com",
   "subjectFilter": "meter reading request",
   "checkIntervalDays": 1,
-  "emailLookbackDays": 60,
+  "emailLookbackDays": 14,
   "logRetentionDays": 30,
   "notifications": {
     "toast": true,
