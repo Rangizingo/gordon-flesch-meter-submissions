@@ -1,0 +1,23 @@
+# Logs
+logs/
+*.log
+
+# Secrets and tokens
+*token*.json
+*secret*
+*.cred
+
+# Debug files
+debug_*.html
+debug_*.json
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# IDE
+.vscode/
+.idea/
+
+# Test files (keep patterns, remove actual test outputs)
+test_*.ps1
