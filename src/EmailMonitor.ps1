@@ -61,19 +61,22 @@ function Get-PendingMeterRequests {
     Write-Log "Checking emails for $user..." -Level "INFO"
 
     try {
-        # Search for meter reading request emails
-        $messages = Get-MgUserMessage -UserId $user `
-            -Filter "contains(subject, '$SubjectFilter')" `
-            -Top 50 `
-            -Property Id, Subject, Body, ReceivedDateTime, From, IsRead `
-            -OrderBy "receivedDateTime desc"
+        # Calculate date filter
+        $cutoffDate = (Get-Date).AddDays(-$DaysBack).ToString("yyyy-MM-ddTHH:mm:ssZ")
 
-        # Filter by sender and date
-        $cutoffDate = (Get-Date).AddDays(-$DaysBack)
+        # Use Search instead of Filter for subject (Graph API limitation)
+        # Search for emails containing the subject text
+        $messages = Get-MgUserMessage -UserId $user `
+            -Search "`"subject:meter reading request`"" `
+            -Top 50 `
+            -Property Id, Subject, Body, ReceivedDateTime, From, IsRead
+
+        # Filter by sender and date in PowerShell
+        $cutoffDateTime = (Get-Date).AddDays(-$DaysBack)
 
         $filtered = $messages | Where-Object {
             $_.From.EmailAddress.Address -eq $SenderFilter -and
-            $_.ReceivedDateTime -gt $cutoffDate
+            $_.ReceivedDateTime -gt $cutoffDateTime
         }
 
         Write-Log "Found $($filtered.Count) meter request emails" -Level "INFO"
@@ -173,4 +176,3 @@ function Test-EmailProcessed {
     return $EmailId -in $processed
 }
 
-Export-ModuleMember -Function Connect-GraphAPI, Disconnect-GraphAPI, Get-PendingMeterRequests, Parse-MeterRequestEmail, Test-EmailProcessed, Add-ProcessedEmailId

@@ -7,7 +7,21 @@
       "snmpCommunity": "public",
       "meterOid": "1.3.6.1.4.1.367.3.2.1.2.19.5.1.9.1",
       "location": "3rd FL Accounting",
+      "make": "Ricoh",
+      "model": "MP3352SP",
       "enabled": true
+    },
+    {
+      "equipmentId": "JA7504",
+      "serial": "701810330CL58",
+      "ip": "10.3.1.40",
+      "snmpCommunity": "public",
+      "meterOid": "1.3.6.1.2.1.43.10.2.1.4.1.1",
+      "location": "Pennsauken NJ",
+      "make": "Lexmark",
+      "model": "XM3250",
+      "enabled": true,
+      "notes": "SNMP may need troubleshooting - verify community string"
     }
   ]
 }

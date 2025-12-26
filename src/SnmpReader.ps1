@@ -50,13 +50,13 @@ function Send-SnmpGet {
     $varbind = @([byte]0x30, [byte]($oidSeq.Count + $nullVal.Count)) + $oidSeq + $nullVal
     $varbindList = @([byte]0x30, [byte]$varbind.Count) + $varbind
 
-    $reqId = @([byte]0x02, [byte]0x01, [byte]0x01)
+    $reqId = @([byte]0x02, [byte]0x04, [byte]0x00, [byte]0x00, [byte]0x00, [byte]0x01)  # 4-byte request-id
     $errStatus = @([byte]0x02, [byte]0x01, [byte]0x00)
     $errIndex = @([byte]0x02, [byte]0x01, [byte]0x00)
     $pduContent = $reqId + $errStatus + $errIndex + $varbindList
     $pdu = @([byte]0xA0, [byte]$pduContent.Count) + $pduContent
 
-    $version = @([byte]0x02, [byte]0x01, [byte]0x00)
+    $version = @([byte]0x02, [byte]0x01, [byte]0x01)  # v2c (0x01) instead of v1 (0x00)
     $commSeq = @([byte]0x04, [byte]$commBytes.Count) + $commBytes
     $msgContent = $version + $commSeq + $pdu
     $packet = @([byte]0x30, [byte]$msgContent.Count) + $msgContent
@@ -69,15 +69,23 @@ function Send-SnmpGet {
         $response = $udp.Receive([ref]$ep)
         $udp.Close()
 
-        # Parse response - find integer value
-        for ($i = $response.Count - 10; $i -lt $response.Count - 1; $i++) {
-            if ($response[$i] -eq 0x02) {  # Integer type
+        # Parse response - find Counter32 (0x41), Gauge32 (0x42), or Integer (0x02)
+        # Scan from end backwards to find the value
+        for ($i = $response.Count - 3; $i -ge 20; $i--) {
+            $type = $response[$i]
+            # Counter32=0x41, Gauge32=0x42, Integer=0x02
+            if ($type -eq 0x41 -or $type -eq 0x42 -or ($type -eq 0x02 -and $i -gt 30)) {
                 $len = $response[$i + 1]
-                $val = 0
-                for ($j = 0; $j -lt $len; $j++) {
-                    $val = ($val -shl 8) + $response[$i + 2 + $j]
+                if ($len -gt 0 -and $len -le 5 -and ($i + 2 + $len) -le $response.Count) {
+                    $val = [uint64]0
+                    for ($j = 0; $j -lt $len; $j++) {
+                        $val = ($val -shl 8) + $response[$i + 2 + $j]
+                    }
+                    # Only accept reasonable page counts (> 100)
+                    if ($val -gt 100) {
+                        return @{ Success = $true; Value = $val; Error = $null }
+                    }
                 }
-                return @{ Success = $true; Value = $val; Error = $null }
             }
         }
         return @{ Success = $false; Value = $null; Error = "Could not parse SNMP response" }
@@ -150,4 +158,3 @@ function Test-PrinterConnection {
     return $ping
 }
 
-Export-ModuleMember -Function Get-PrinterMeterReading, Test-PrinterConnection, Send-SnmpGet

@@ -84,4 +84,3 @@ function Get-LogSummary {
     }
 }
 
-Export-ModuleMember -Function Get-LogPath, Write-Log, Clear-OldLogs, Get-LogSummary

@@ -159,4 +159,3 @@ function Send-SubmissionSummary {
     }
 }
 
-Export-ModuleMember -Function Send-ToastNotification, Send-EmailNotification, Send-SubmissionSummary

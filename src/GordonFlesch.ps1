@@ -192,4 +192,3 @@ function Test-SubmissionUrl {
     }
 }
 
-Export-ModuleMember -Function Get-GFSessionData, Submit-MeterReading, Test-SubmissionUrl
